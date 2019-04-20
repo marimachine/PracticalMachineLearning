@@ -1,0 +1,229 @@
+---
+title: "Practical Machine Learning final submission"
+author: "MeWe"
+date: "20 April 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Practical Machine Learning - Final Course Project#
+
+This is the result of the final course project for the coursera course on Practical Machine Learning. 
+The assignement consists of the following backgrounf information:
+
+### Project Question
+
+_One thing that people regularly do is quantify how much of a particular activity they do, 
+but they rarely quantify how well they do it. In this project, your goal will be to use data 
+from accelerometers on the belt, forearm, arm, and dumbell of 6 participants._
+
+_The goal of your project is to predict the manner in which they did the exercise. 
+This is the "classe" variable in the training set. You may use any of the other variables to predict with. 
+You should create a report describing how you built your model, how you used cross validation
+, what you think the expected out of sample error is, and why you made the choices you did. 
+ You will also use your prediction model to predict 20 different test cases._
+
+### Solution Approach
+ 
+**1. The goal is to find an algorithm that allows to predict the outcome of the class variable based on the availabe variables in the test set:**
+
+**Approach:**
+
+**a) Select only variables that are available in the test set, have no near zero variance and are non missing.**
+
+**b) Prepare training set and split it up in training and validation set and do some descriptive analysis in R.**
+
+**c) Estimate three different ml algorithms and use confusion matrix to show accuracy.**
+
+**e) Show Importance of variable where appropriate.**
+
+**d) Predict classe variables for the 20 cases in the test data data set. **
+
+##____________________________________________________________________________________## 
+
+```{r}
+suppressMessages(library(caret))
+suppressMessages(library(dplyr))
+suppressMessages(library(corrplot))
+```
+
+
+#### Load data
+```{r}
+train <- read.csv("C:/Users/Workstation/Documents/marimachine/coursera/Practical Machine Learning - Final Project/pml-training.csv")
+test <- read.csv("C:/Users/Workstation/Documents/marimachine/coursera/Practical Machine Learning - Final Project/pml-testing.csv")
+```
+
+
+#### a) Variable preprocessing
+
+**Checking dimensions of classe variable**
+```{r}
+unique(train$classe)
+```
+
+
+**First 7 variables to be dropped out, since they are not meaningful.**
+```{r}
+train <- train[-c(1:7)]
+test <- test[-c(1:7)]
+
+```
+
+
+**Check for availability of remaining variables test set in train set. Here, only the first 10 rows will be displayed but one could compare the whole train and test data set. All variables available in train and test set apart from classe variable.**
+```{r}
+ntest<-names(test)
+ntrain<-names(train)
+result <- cbind(ntest, ntrain)
+head(result, 10)
+```
+ 
+ 
+ 
+**As a next step we want to identify variables with a near zero variance and remove them from test and trainig set since they would be irrelevant or would not bring additional explanatory power to the model.**
+```{r}
+nzv_train <- nearZeroVar(train)
+train <- train[,-nzv_train]
+test <- test[,-nzv_train]
+```
+
+
+
+**Check for NA NaN -Inf variables in the training data set and remove them from both the training and test set as they cannot be used lateron to predict on classe variable in the test set.** 
+```{r}
+namesNA <- names(test)[seq_along(names(test))[sapply(test, function(x)all(is.na(x)))]]
+```
+
+
+```{r}
+train <- train[,-which(names(train) %in% namesNA)]
+test <- test[,-which(names(test) %in% namesNA)]
+```
+
+
+#### b) Prepare training and validation set from train dataset. 
+
+**Use a split of 0.7 training and 0.3 validation.** 
+```{r}
+set.seed(1981)
+inTrain = createDataPartition(train$classe, p = .7)[[1]]
+training = train[inTrain,]
+validation = train[-inTrain,]
+dim(training)
+dim(validation)
+```
+
+
+#### Data visualisation -
+
+**# 1 - Find highly correlated data** 
+
+
+```{r}
+cor_mat <- cor(training[, -53]) # all corrs without classe var (53)
+corrplot(cor_mat, order = "FPC", method = "color", type = "upper", 
+         tl.cex = 0.9, tl.col = rgb(0, 0, 0))
+
+```
+
+```{r}
+highlyCorrelated = findCorrelation(cor_mat, cutoff=0.70)
+names(training)[highlyCorrelated]
+```
+**# 2 - Some q plots**
+qplot(pitch_belt,roll_belt,colour=classe,data=training)
+qplot(yaw_belt,roll_belt,colour=classe,data=training)
+qplot(total_accel_belt,roll_belt,colour=classe,data=training)
+
+**# 3 - Feature plot**
+```{r}
+                        
+
+featurePlot(x=training [,c("pitch_belt","yaw_belt", "total_accel_belt","roll_belt")],
+            y= training$classe,
+            plot="pairs")
+```
+
+#### c) Training the models
+
+**I am training four models - one random forests, one gbm and one lda. I then perform predictions on the validation set and perform and analyse performance based on the accuracy indicator. Finally, I am performing a model ensemble based on the three models.**
+```{r}
+
+traindata = training
+
+model_rf <- train(classe ~., method="rf", data = traindata)
+model_gbm <- train(classe ~., method = "gbm", data = traindata, verbose = F )
+model_lda <- train(classe ~., method = "lda", data = traindata, verbose = F )
+
+```
+
+
+**Single prediction on validation set **
+```{r}
+rf_pred <- predict(model_rf, validation)
+gbm_pred <- predict(model_gbm, validation)
+lda_pred <- predict(model_lda, validation)
+```
+
+
+
+**Combine predictions of single predictions**
+```{r}
+predDF <- data.frame(rf_pred, gbm_pred, lda_pred, classe = validation$classe, stringsAsFactors = F)
+modelStack <- train(classe ~ ., data = predDF, method = "rf")
+modelStack_pred <- predict(modelStack, validation)
+
+```
+
+**Show confusion matrices for the models, incl. model stack.**
+```{r}
+random_forest_accuracy <- confusionMatrix(rf_pred, validation$class)$overall['Accuracy']
+confusionMatrix(gbm_pred, validation$class)$overall['Accuracy']
+confusionMatrix(lda_pred, validation$class)$overall['Accuracy']
+confusionMatrix(modelStack_pred, validation$class)$overall['Accuracy']
+```
+
+
+**Although the ensemble model (model stack) shows the best accuracy, I also want to interpret the used predictors. The variable importance for the random forest can help.**
+
+```{r}
+varImp(model_rf)
+```
+
+**I finally decide for the random forest model to perform the prediction for the 20 test cases provided in the test data set.** 
+
+
+```{r}
+final_pred_rf <- predict(model_rf, newdata=test)
+final_pred_rf
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
